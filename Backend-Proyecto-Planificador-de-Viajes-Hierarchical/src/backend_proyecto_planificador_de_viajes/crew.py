@@ -26,8 +26,8 @@ from crewai.project import CrewBase, agent, crew, task  # Decoradores para organ
 # La versión con DuckDuckGo sigue disponible en tools/custom_tool.py como alternativa:
 #   from .tools.custom_tool import InternetSearchTool
 from .tools.busqueda_internet_tool import TavilyInternetSearchTool
-import agentops
-agentops.init()
+# LLM de OpenAI con respaldo en Gemini si se acaba el credito (None = default de CrewAI).
+from .respaldo_llm import llm_del_crew
 
 # DECORADOR @CrewBase: Indica que esta clase define un Crew
 @CrewBase
@@ -46,6 +46,11 @@ class TravelCrew():
 		# Inicializar la herramienta de búsqueda que usarán los agentes (Tavily)
 		self.search_tool = TavilyInternetSearchTool()
 
+		# Un solo LLM compartido por el manager y los 6 especialistas: OpenAI
+		# (MODEL del .env) y, si se acaba el credito, Gemini. Sin GEMINI_API_KEY
+		# es None y CrewAI usa MODEL directamente, como antes.
+		self.llm = llm_del_crew()
+
 	# ========================================================================
 	# AGENTE MANAGER (coordinador del proceso jerárquico)
 	# ========================================================================
@@ -62,6 +67,7 @@ class TravelCrew():
 			# agentes (hacerles preguntas y pedirles trabajo). Es el corazón del
 			# "diálogo" entre agentes en el modo jerárquico.
 			allow_delegation=True,
+			llm=self.llm,
 			verbose=True
 			# NO tiene herramientas: no busca ni redacta, solo coordina.
 		)
@@ -79,6 +85,7 @@ class TravelCrew():
 		return Agent(
 			config=self.agents_config['agente_experto_cultural'],  # Lee role, goal, backstory del YAML
 			tools=[self.search_tool],  # ¡PUEDE BUSCAR EN INTERNET!
+			llm=self.llm,
 			verbose=True  # Muestra el razonamiento del agente en consola
 		)
 
@@ -88,6 +95,7 @@ class TravelCrew():
 		return Agent(
 			config=self.agents_config['agente_gourmet_local'],
 			tools=[self.search_tool],  # ¡PUEDE BUSCAR EN INTERNET!
+			llm=self.llm,
 			verbose=True
 		)
 	
@@ -97,6 +105,7 @@ class TravelCrew():
 		return Agent(
 			config=self.agents_config['agente_logistica'],
 			tools=[self.search_tool],  # ¡PUEDE BUSCAR EN INTERNET!
+			llm=self.llm,
 			verbose=True
 		)
 
@@ -105,6 +114,7 @@ class TravelCrew():
 		"""Organiza toda la información en un itinerario día por día."""
 		return Agent(
 			config=self.agents_config['agente_planificador_itinerario'],
+			llm=self.llm,
 			verbose=True
 			# NO tiene herramientas: solo organiza la info de otros agentes
 		)
@@ -118,6 +128,7 @@ class TravelCrew():
 			# CrewAI inyecta automáticamente la herramienta de crear eventos de
 			# Google Calendar usando el token CREWAI_PLATFORM_INTEGRATION_TOKEN del .env.
 			apps=['google_calendar/create_event'],
+			llm=self.llm,
 			verbose=True
 		)
 
@@ -126,6 +137,7 @@ class TravelCrew():
 		"""Escribe la versión final del itinerario en formato Markdown."""
 		return Agent(
 			config=self.agents_config['agente_redactor_viajes'],
+			llm=self.llm,
 			verbose=True
 			# NO tiene herramientas: solo redacta el documento final
 		)

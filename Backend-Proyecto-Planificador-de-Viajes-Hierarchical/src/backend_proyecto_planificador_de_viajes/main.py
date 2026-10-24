@@ -1,5 +1,6 @@
 # src/travel_crew_backend/main.py
 
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from pydantic import BaseModel
 from starlette.responses import JSONResponse
@@ -8,12 +9,24 @@ import os
 
 # Usamos una importación relativa porque 'crew.py' está en el mismo directorio.
 from .crew import TravelCrew
+from .observabilidad import cerrar_observabilidad, init_observabilidad, traza
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # El instrumentador de CrewAI tiene que estar puesto antes de que corra el
+    # primer crew. Sin claves de Langfuse no hace nada.
+    init_observabilidad()
+    yield
+    cerrar_observabilidad()
+
 
 # Inicializar la aplicación FastAPI
 app = FastAPI(
     title="API del Asistente de Viajes",
     description="Una API para planificar itinerarios de viaje personalizados usando un equipo de agentes de IA (CrewAI).",
-    version="1.0.0"
+    version="1.0.0",
+    lifespan=lifespan,
 )
 
 class TripRequest(BaseModel):
@@ -43,7 +56,10 @@ async def plan_trip_endpoint(request: TripRequest):
         travel_crew = TravelCrew()
         # crewai 1.14+: dentro de un endpoint async hay que usar kickoff_async,
         # no kickoff (síncrono), o lanza "invoked synchronously from within a running event loop".
-        result = await travel_crew.crew().kickoff_async(inputs=inputs)
+        # Una traza de Langfuse por peticion; el manager y los especialistas cuelgan de ella.
+        with traza("plan-trip-hierarchical", request.prompt, tags=["plan-trip", "hierarchical"]) as observacion:
+            result = await travel_crew.crew().kickoff_async(inputs=inputs)
+            observacion.update(output=result.raw)
         print(f"✅ Crew finalizado. Procesando resultado.")
 
         # 1. Obtener el resultado final y limpiarlo para el chat

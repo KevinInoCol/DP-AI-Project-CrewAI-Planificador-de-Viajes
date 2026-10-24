@@ -14,8 +14,12 @@ dependencies = [
     "fastapi>=0.110.0",
     "uvicorn[standard]>=0.29.0",
     "python-dotenv>=1.0.0",
-    "agentops>=0.4.21",
     "tavily-python>=0.5.0",
+    # Observabilidad: Langfuse + instrumentador de CrewAI (spans OTel).
+    "langfuse>=4",
+    "openinference-instrumentation-crewai>=1.1.21",
+    # Proveedor nativo de Gemini en CrewAI (respaldo si OpenAI se queda sin credito).
+    "google-genai>=1.0",
 ]
 
 [project.scripts]

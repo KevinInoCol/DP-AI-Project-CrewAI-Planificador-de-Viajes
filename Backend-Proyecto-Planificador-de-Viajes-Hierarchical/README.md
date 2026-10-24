@@ -27,6 +27,9 @@ Todo lo demás (herramientas Tavily, Google Calendar, FastAPI, YAML de tareas,
   - `OPENAI_API_KEY` — modelo LLM (también lo usa el **manager** para coordinar).
   - `TAVILY_API_KEY` — búsqueda en internet de los agentes ([gratis en tavily.com](https://tavily.com)).
   - `CREWAI_PLATFORM_INTEGRATION_TOKEN` — integración de Google Calendar (Settings → Integrations en app.crewai.com).
+  - `GEMINI_API_KEY` — *opcional*, respaldo con Gemini 3.5 Flash si OpenAI se queda sin crédito.
+  - `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_BASE_URL` — *opcional*,
+    trazas en [Langfuse](https://langfuse.com). Sin ellas, la app funciona igual sin tracing.
 
 ## Puesta en marcha
 
@@ -105,6 +108,8 @@ El rol/goal/backstory del manager está en `config/agents.yaml` bajo
 src/backend_proyecto_planificador_de_viajes/
 ├── main.py                  # API FastAPI (endpoint /plan-trip) — idéntico al original
 ├── crew.py                  # Crew JERÁRQUICO (manager + agentes + tareas)
+├── observabilidad.py        # Langfuse: trazas del crew
+├── respaldo_llm.py          # Respaldo con Gemini si OpenAI se queda sin crédito
 ├── config/
 │   ├── agents.yaml          # Roles, objetivos y backstories (incluye el manager)
 │   └── tasks.yaml           # Descripciones y outputs esperados (idéntico al original)
@@ -120,3 +125,19 @@ src/backend_proyecto_planificador_de_viajes/
 - El modo jerárquico suele consumir **más tokens y tiempo** que el secuencial, porque
   el manager razona sobre cada delegación y revisión. Es normal.
 - El itinerario final se guarda en `itinerary.md` y se devuelve en `download_content`.
+
+### Observabilidad con Langfuse
+
+`observabilidad.py` instrumenta el crew con `CrewAIInstrumentor` de OpenInference
+(`use_event_listener=True`). Cada `/plan-trip` es una traza `plan-trip-hierarchical`
+con spans del manager, de cada delegación a un especialista, de las tareas, las
+tools y cada llamada al LLM (con tokens). Es la mejor forma de *ver* el diálogo
+manager ↔ especialistas que distingue a este modo del secuencial.
+
+### Respaldo con Gemini si OpenAI se queda sin crédito
+
+Con `GEMINI_API_KEY` en el `.env`, `respaldo_llm.py` envuelve el LLM del crew
+(`LLMConRespaldo`, compartido por el manager y los 6 especialistas): cada llamada
+va primero a OpenAI y, **solo** si responde `429 insufficient_quota`, se repite con
+`gemini-3.5-flash`. Cualquier otro error sube tal cual, para que Gemini no tape bugs.
+Cuando entra el respaldo, la consola muestra `💸 OpenAI sin credito: el crew pasa a Gemini`.
