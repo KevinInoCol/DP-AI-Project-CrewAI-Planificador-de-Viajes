@@ -23,6 +23,7 @@ dependencies = [
     "langfuse>=4",
     "openinference-instrumentation-crewai>=1.1.21",
     "langchain-google-genai>=4.4.2",
+    "redis>=5.0",
 ]
 
 [project.scripts]

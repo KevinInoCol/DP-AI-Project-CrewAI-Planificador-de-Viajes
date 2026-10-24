@@ -25,6 +25,13 @@ from pydantic import BaseModel
 from starlette.responses import JSONResponse
 
 from .conversational_agent import cerrar_memoria, init_resources, responder
+from .conversational_agent.message_buffer import (
+    BUFFER_ENABLED,
+    BUFFER_WINDOW_SECONDS,
+    abrir_redis,
+    cerrar_redis,
+    encolar_mensaje,
+)
 from .conversational_agent.tools import limpiar_salida_llm
 from .crew import TravelCrew
 from .observabilidad import cerrar_observabilidad, init_observabilidad, traza
@@ -35,6 +42,9 @@ ARCHIVO_ITINERARIO = "itinerary.md"
 # DATABASE_URL, por ejemplo). /plan-trip sigue funcionando igual.
 _chat_disponible = False
 _chat_error = ""
+# Debounce con Redis. Se pone a False si esta apagado en el .env o si Redis no
+# responde al arrancar: en ese caso /chat contesta mensaje por mensaje.
+_buffer_activo = False
 
 
 @asynccontextmanager
@@ -44,7 +54,7 @@ async def lifespan(app: FastAPI):
     Un fallo aqui NO tumba la app: /plan-trip no depende del agente, y es mejor
     servirlo que dejar el backend entero caido por una variable de entorno.
     """
-    global _chat_disponible, _chat_error
+    global _chat_disponible, _chat_error, _buffer_activo
     # Primero el tracing: el instrumentador de CrewAI tiene que estar puesto
     # antes de que corra el primer crew. Sin claves de Langfuse no hace nada.
     init_observabilidad()
@@ -57,8 +67,18 @@ async def lifespan(app: FastAPI):
         print(f"⚠️  Agente conversacional NO disponible: {e}")
         print("   /plan-trip sigue operativo. /chat devolvera 503.")
 
+    if BUFFER_ENABLED:
+        try:
+            await abrir_redis()
+            _buffer_activo = True
+            print(f"🧺 Debounce activo: ventana de {BUFFER_WINDOW_SECONDS:g}s (Redis).")
+        except Exception as e:
+            print(f"⚠️  Debounce desactivado, Redis no responde: {e}")
+            print("   /chat contestara mensaje por mensaje.")
+
     yield
 
+    await cerrar_redis()
     await cerrar_memoria()
     cerrar_observabilidad()
 
@@ -89,10 +109,14 @@ class ChatRequest(BaseModel):
 async def chat_endpoint(request: ChatRequest):
     """Un turno de conversacion.
 
-    Devuelve siempre `reply`. Devuelve ademas `itinerary` solo en el turno en que
-    el agente decidio lanzar el crew: ese campo trae el markdown REAL del crew,
-    no la version que redactaria el LLM, para que el frontend lo pinte en sus
+    Devuelve `reply`. Devuelve ademas `itinerary` solo en el turno en que el
+    agente decidio lanzar el crew: ese campo trae el markdown REAL del crew, no
+    la version que redactaria el LLM, para que el frontend lo pinte en sus
     tarjetas por dia.
+
+    Con el debounce activo, los mensajes seguidos de un mismo hilo se agrupan:
+    solo la ULTIMA request del bloque trae la respuesta (a todo el bloque); las
+    anteriores devuelven `merged: true` con `reply: null`.
     """
     if not _chat_disponible:
         return JSONResponse(
@@ -104,7 +128,14 @@ async def chat_endpoint(request: ChatRequest):
         )
 
     try:
-        resultado = await responder(request.thread_id, request.message)
+        if _buffer_activo:
+            resultado = await encolar_mensaje(
+                request.thread_id, request.message, responder
+            )
+            if resultado is None:
+                return {"reply": None, "itinerary": None, "merged": True}
+        else:
+            resultado = await responder(request.thread_id, request.message)
     except Exception as e:
         print(f"❌ Error en el turno de chat: {e}")
         return JSONResponse(
@@ -115,7 +146,7 @@ async def chat_endpoint(request: ChatRequest):
             },
         )
 
-    respuesta = {"reply": resultado["reply"], "itinerary": None}
+    respuesta = {"reply": resultado["reply"], "itinerary": None, "merged": False}
 
     if "itinerario" in resultado:
         respuesta["itinerary"] = {
@@ -177,4 +208,5 @@ def read_root():
     return {
         "status": "El servidor del Asistente de Viajes IA esta funcionando.",
         "chat_disponible": _chat_disponible,
+        "debounce_activo": _buffer_activo,
     }

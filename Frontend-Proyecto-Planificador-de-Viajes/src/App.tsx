@@ -19,6 +19,13 @@ const USER_NAME = "Kevin";
 // conversacional normal responde muy por debajo de esto.
 const SEGUNDOS_HASTA_CREW = 6;
 
+// Ventana de debounce del backend (MESSAGE_BUFFER_WINDOW_SECONDS): el backend
+// espera este silencio antes de responder, para juntar mensajes seguidos. Se
+// suma a SEGUNDOS_HASTA_CREW para no confundir esa espera con el crew.
+const SEGUNDOS_DEBOUNCE = Number(
+  import.meta.env.VITE_MESSAGE_BUFFER_WINDOW_SECONDS ?? 15
+);
+
 // Tarjetas de inspiración de la pantalla de bienvenida
 const INSPIRATION: { title: string; query: string; prompt: string }[] = [
   {
@@ -58,7 +65,12 @@ const nuevoThreadId = () =>
 
 export default function App() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [loading, setLoading] = useState(false);
+  // Requests a /chat en vuelo. Con el debounce el usuario puede escribir varios
+  // mensajes seguidos sin esperar, así que puede haber más de una.
+  const [pendientes, setPendientes] = useState(0);
+  // Momento del último envío: cada mensaje nuevo reinicia la ventana del backend.
+  const [ultimoEnvio, setUltimoEnvio] = useState(0);
+  const loading = pendientes > 0;
   const [esperaLarga, setEsperaLarga] = useState(false);
   const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS);
   const [threadId, setThreadId] = useState(nuevoThreadId);
@@ -84,9 +96,13 @@ export default function App() {
       setEsperaLarga(false);
       return;
     }
-    const t = setTimeout(() => setEsperaLarga(true), SEGUNDOS_HASTA_CREW * 1000);
+    setEsperaLarga(false);
+    const t = setTimeout(
+      () => setEsperaLarga(true),
+      (SEGUNDOS_DEBOUNCE + SEGUNDOS_HASTA_CREW) * 1000
+    );
     return () => clearTimeout(t);
-  }, [loading]);
+  }, [loading, ultimoEnvio]);
 
   const resetChat = () => {
     if (loading) return;
@@ -97,7 +113,6 @@ export default function App() {
   };
 
   const handleSend = async (freeText: string) => {
-    if (loading) return;
     const prompt = composePrompt(freeText, filters);
     if (!prompt.trim()) return;
 
@@ -107,10 +122,14 @@ export default function App() {
       content: prompt,
     };
     setMessages((prev) => [...prev, userMsg]);
-    setLoading(true);
+    setPendientes((n) => n + 1);
+    setUltimoEnvio(Date.now());
 
     try {
       const res = await chat(prompt, threadId);
+
+      // Agrupado con mensajes posteriores: la respuesta llega en otra request.
+      if (res.merged) return;
 
       const nuevos: ChatMessage[] = [
         {
@@ -154,7 +173,7 @@ export default function App() {
         { id: nextId(), role: "assistant", isError: true, content },
       ]);
     } finally {
-      setLoading(false);
+      setPendientes((n) => n - 1);
     }
   };
 
@@ -245,7 +264,6 @@ export default function App() {
           <div className="mx-auto max-w-3xl px-4 py-3">
             <ChatInput
               onSend={handleSend}
-              disabled={loading}
               canSendEmpty={hasAnyFilter}
             />
             <p className="mt-1.5 px-1 text-center text-[11px] text-slate-400">

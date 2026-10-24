@@ -48,14 +48,18 @@ export interface PlanTripResponse {
 /**
  * Respuesta del backend (endpoint /chat).
  *
- * `reply` es lo que dice el agente conversacional y viene siempre.
+ * `reply` es lo que dice el agente conversacional.
  * `itinerary` solo llega en el turno en que el agente lanzó el crew, y trae el
  * markdown real del crew — no la versión reescrita por el LLM — para que se
  * pinte en tarjetas por día.
+ * `merged` llega en true cuando el backend agrupó este mensaje con otros
+ * posteriores (debounce): entonces `reply` es null y la respuesta a todo el
+ * bloque llega en la request del último mensaje.
  */
 export interface ChatResponse {
-  reply: string;
+  reply: string | null;
   itinerary?: PlanTripResponse | null;
+  merged?: boolean;
 }
 
 export type Role = "user" | "assistant";
