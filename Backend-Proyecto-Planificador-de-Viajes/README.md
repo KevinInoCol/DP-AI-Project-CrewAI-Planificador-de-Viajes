@@ -18,11 +18,14 @@ que escribir la petición perfecta de una sola vez: la construye conversando.
 - [uv](https://docs.astral.sh/uv/) para gestionar dependencias
 - Claves en el archivo `.env` (ver `.env.example`):
   - `OPENAI_API_KEY` — modelo LLM.
+  - `GEMINI_API_KEY` — *opcional*, respaldo con Gemini 3.5 Flash si OpenAI se queda sin crédito.
   - `TAVILY_API_KEY` — búsqueda en internet de los agentes ([gratis en tavily.com](https://tavily.com)).
   - `CREWAI_PLATFORM_INTEGRATION_TOKEN` — integración de Google Calendar (Settings → Integrations en app.crewai.com).
   - `DB_USER`, `DB_PASSWORD`, `DB_HOST`, `DB_PORT`, `DB_NAME` — Postgres donde el
     agente conversacional guarda el historial. La contraseña se URL-encodea
     sola, así que va tal cual aunque tenga símbolos.
+  - `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_BASE_URL` — *opcional*,
+    trazas en [Langfuse](https://langfuse.com). Sin ellas, la app funciona igual sin tracing.
 - Un **Postgres** accesible (Supabase, Neon, Docker local…). Sin él, `/chat`
   responde `503` y solo funciona `/plan-trip`.
 
@@ -175,6 +178,8 @@ Es `AsyncPostgresSaver` y no `PostgresSaver` porque el grafo corre con
 src/backend_proyecto_planificador_de_viajes/
 ├── main.py                  # API FastAPI (/chat y /plan-trip)
 ├── crew.py                  # Definición del crew (agentes + tareas)
+├── observabilidad.py        # Langfuse: trazas del agente y del crew
+├── respaldo_llm.py          # Respaldo con Gemini si OpenAI se queda sin crédito
 ├── config/
 │   ├── agents.yaml          # Roles, objetivos y backstories
 │   └── tasks.yaml           # Descripciones y outputs esperados
@@ -201,21 +206,33 @@ src/backend_proyecto_planificador_de_viajes/
 - El itinerario final se guarda en `itinerary.md` (vía `output_file` de la tarea de
   redacción) y se devuelve en `download_content`.
 
-### ⚠️ AgentOps rompe `create_agent` de LangChain 1.x
+### Observabilidad con Langfuse
 
-`agentops.init()` (en `crew.py`) instrumenta LangGraph y envuelve
-`StateGraph.add_node` con `functools.wraps`. Como `create_agent` pasa instancias
-de `RunnableCallable` y no funciones, eso deja un `__wrapped__` que
-`inspect.signature` sigue, y **toda** llamada a `create_agent` muere con:
+`observabilidad.py` traza las dos mitades del sistema en el mismo proyecto de Langfuse:
 
-```
-TypeError: descriptor '__call__' for 'type' objects doesn't apply to a 'RunnableCallable' object
-```
+- **Agente conversacional**: `CallbackHandler` de Langfuse en el `config` de cada
+  `.ainvoke()`. Cada turno de `/chat` es una traza `chat-turn`, y todas las de un
+  mismo `thread_id` quedan agrupadas en una **sesión**.
+- **Crew**: `CrewAIInstrumentor` de OpenInference con `use_event_listener=True`,
+  que crea spans de crew, agente, tarea, tool y de cada llamada al LLM (con tokens).
+  Cuando el agente lanza el crew, esos spans cuelgan de la traza del turno.
+  `/plan-trip` produce su propia traza `plan-trip`.
 
-El traceback no menciona a AgentOps por ningún lado, así que es fácil perder una
-tarde buscando el fallo en el código del agente.
+No se instrumenta el SDK de OpenAI a propósito: el agente usa `ChatOpenAI`, que va
+por ese SDK, y cada generación saldría duplicada.
 
-`conversational_agent/agentops_compat.py` quita **solo** ese wrapper, desde
-`init_resources()`. El tracing de CrewAI y el resto del de LangGraph siguen
-activos; lo único que se pierde son los spans por nodo del grafo conversacional.
-Cuando AgentOps lo arregle, ese archivo se puede borrar entero.
+### Respaldo con Gemini si OpenAI se queda sin crédito
+
+Con `GEMINI_API_KEY` en el `.env`, `respaldo_llm.py` hace que cada llamada vaya
+primero a OpenAI y, **solo** si OpenAI responde `429 insufficient_quota`, se repita
+esa misma llamada con `gemini-3.5-flash`. Cualquier otro error sube tal cual, para
+que Gemini no tape bugs.
+
+- **Agente conversacional**: middleware `FallbackPorCredito`. No se usa el
+  `ModelFallbackMiddleware` oficial porque salta con *cualquier* error.
+- **Resumen del historial**: el `SummarizationMiddleware` llama a su modelo por
+  fuera del middleware anterior, así que lleva su propio respaldo.
+- **Crew**: `LLMConRespaldo`, un `BaseLLM` de CrewAI compartido por los 6 agentes.
+
+Cuando entra el respaldo, la consola muestra `💸 OpenAI sin credito: ... pasa a Gemini`.
+Sin `GEMINI_API_KEY` todo funciona como antes, sin respaldo.

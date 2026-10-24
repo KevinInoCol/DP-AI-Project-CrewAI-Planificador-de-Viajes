@@ -27,6 +27,7 @@ from starlette.responses import JSONResponse
 from .conversational_agent import cerrar_memoria, init_resources, responder
 from .conversational_agent.tools import limpiar_salida_llm
 from .crew import TravelCrew
+from .observabilidad import cerrar_observabilidad, init_observabilidad, traza
 
 ARCHIVO_ITINERARIO = "itinerary.md"
 
@@ -44,6 +45,10 @@ async def lifespan(app: FastAPI):
     servirlo que dejar el backend entero caido por una variable de entorno.
     """
     global _chat_disponible, _chat_error
+    # Primero el tracing: el instrumentador de CrewAI tiene que estar puesto
+    # antes de que corra el primer crew. Sin claves de Langfuse no hace nada.
+    init_observabilidad()
+
     try:
         await init_resources()
         _chat_disponible = True
@@ -55,6 +60,7 @@ async def lifespan(app: FastAPI):
     yield
 
     await cerrar_memoria()
+    cerrar_observabilidad()
 
 
 app = FastAPI(
@@ -135,7 +141,9 @@ async def plan_trip_endpoint(request: TripRequest):
         travel_crew = TravelCrew()
         # crewai 1.14+: dentro de un endpoint async hay que usar kickoff_async,
         # no kickoff, o lanza "invoked synchronously from within a running event loop".
-        result = await travel_crew.crew().kickoff_async(inputs=inputs)
+        with traza("plan-trip", request.prompt, tags=["plan-trip"]) as observacion:
+            result = await travel_crew.crew().kickoff_async(inputs=inputs)
+            observacion.update(output=result.raw)
         print("✅ Crew finalizado. Procesando resultado.")
 
         final_chat_response = limpiar_salida_llm(result.raw)

@@ -26,12 +26,9 @@ from langchain.agents import create_agent
 from langchain.agents.middleware import SummarizationMiddleware
 from langchain_openai import ChatOpenAI
 
-from .agentops_compat import desactivar_wrapper_add_node
+from ..observabilidad import langfuse_callbacks, traza
+from ..respaldo_llm import FallbackPorCredito, con_respaldo_por_credito, gemini_langchain
 from .chat_history import abrir_memoria, get_checkpointer, log_mensaje
-
-# OJO al orden: importar .tools arrastra crew.py, que llama a agentops.init().
-# El parche de agentops_compat tiene que aplicarse DESPUES de eso, por eso se
-# invoca dentro de init_resources() y no aqui arriba.
 from .tools import get_generar_itinerario_tool
 
 load_dotenv()
@@ -66,6 +63,8 @@ Conversacion:
 _llm: ChatOpenAI | None = None
 _system_prompt: str | None = None
 _config_memoria: dict | None = None
+# Gemini, solo si hay GEMINI_API_KEY. Entra cuando OpenAI se queda sin credito.
+_respaldo = None
 
 
 def _cargar_yaml(ruta: Path) -> dict:
@@ -89,14 +88,10 @@ def _render_system_prompt() -> str:
 
 async def init_resources() -> None:
     """Inicializa lo caro. Se llama UNA vez, en el arranque de la app."""
-    global _llm, _system_prompt, _config_memoria
+    global _llm, _system_prompt, _config_memoria, _respaldo
 
     if not OPENAI_API_KEY:
         raise RuntimeError("Falta OPENAI_API_KEY en el .env.")
-
-    # AgentOps ya se inicializo (al importar crew.py) y dejo LangGraph
-    # instrumentado de una forma que rompe create_agent. Ver agentops_compat.
-    desactivar_wrapper_add_node()
 
     cfg = _cargar_yaml(RUTA_MODEL_CONFIG)
     llm_cfg = cfg["llm"]
@@ -108,9 +103,11 @@ async def init_resources() -> None:
         timeout=llm_cfg["timeout"],
     )
     _system_prompt = _render_system_prompt()
+    _respaldo = gemini_langchain()
 
     await abrir_memoria()
-    print(f"💬 Agente conversacional listo ({llm_cfg['model']}).")
+    respaldo = f", respaldo {_respaldo.model}" if _respaldo else ", sin respaldo"
+    print(f"💬 Agente conversacional listo ({llm_cfg['model']}{respaldo}).")
 
 
 def build_agent(slot: dict):
@@ -125,18 +122,29 @@ def build_agent(slot: dict):
             "arranque de la app (lifespan de FastAPI)."
         )
 
+    resumen = SummarizationMiddleware(
+        model=_config_memoria["summary_model"],
+        trigger=("tokens", _config_memoria["token_limit"]),
+        keep=("messages", _config_memoria["keep_messages"]),
+        summary_prompt=PROMPT_DE_RESUMEN,
+    )
+    middleware = [resumen]
+
+    if _respaldo is not None:
+        # El resumen llama a su propio modelo (gpt-4.1-mini) por fuera del
+        # middleware de fallback, asi que necesita su respaldo aparte.
+        # `_summary_model` es privado, pero es justo lo que el middleware invoca
+        # (en el original es `self.model.with_retry()`, y aqui lo respetamos).
+        resumen._summary_model = con_respaldo_por_credito(
+            resumen.model, _respaldo
+        ).with_retry()
+        middleware.append(FallbackPorCredito(_respaldo))
+
     return create_agent(
         model=_llm,
         tools=[get_generar_itinerario_tool(slot)],
         system_prompt=_system_prompt,
-        middleware=[
-            SummarizationMiddleware(
-                model=_config_memoria["summary_model"],
-                trigger=("tokens", _config_memoria["token_limit"]),
-                keep=("messages", _config_memoria["keep_messages"]),
-                summary_prompt=PROMPT_DE_RESUMEN,
-            )
-        ],
+        middleware=middleware,
         checkpointer=get_checkpointer(),
     )
 
@@ -159,15 +167,22 @@ async def responder(thread_id: str, mensaje: str) -> dict:
     slot: dict = {}
     agente = build_agent(slot)
 
-    resultado = await agente.ainvoke(
-        {"messages": [{"role": "user", "content": mensaje}]},
-        config={"configurable": {"thread_id": thread_id}},
-    )
+    # Una traza de Langfuse por turno, agrupadas en una sesion por thread_id.
+    # Si el agente lanza el crew, sus spans cuelgan de esta misma traza.
+    with traza("chat-turn", mensaje, session_id=thread_id, tags=["chat"]) as observacion:
+        resultado = await agente.ainvoke(
+            {"messages": [{"role": "user", "content": mensaje}]},
+            config={
+                "configurable": {"thread_id": thread_id},
+                "callbacks": langfuse_callbacks(),
+            },
+        )
 
-    mensajes = resultado["messages"]
-    # .text es una PROPIEDAD en langchain-core 1.x (llamarla como metodo esta
-    # deprecado). Concatena los bloques de texto ignorando los de tool_call.
-    reply = mensajes[-1].text
+        mensajes = resultado["messages"]
+        # .text es una PROPIEDAD en langchain-core 1.x (llamarla como metodo esta
+        # deprecado). Concatena los bloques de texto ignorando los de tool_call.
+        reply = mensajes[-1].text
+        observacion.update(output=reply)
 
     tools_usadas = [
         tc["name"]
