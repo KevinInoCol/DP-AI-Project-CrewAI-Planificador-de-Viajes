@@ -1,4 +1,0 @@
-ALTER TABLE checkpoints           ENABLE ROW LEVEL SECURITY;
-ALTER TABLE checkpoint_blobs      ENABLE ROW LEVEL SECURITY;
-ALTER TABLE checkpoint_writes     ENABLE ROW LEVEL SECURITY;
-ALTER TABLE checkpoint_migrations ENABLE ROW LEVEL SECURITY;

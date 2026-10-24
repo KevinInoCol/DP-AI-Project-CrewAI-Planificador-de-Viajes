@@ -27,6 +27,8 @@ que escribir la petición perfecta de una sola vez: la construye conversando.
     sola, así que va tal cual aunque tenga símbolos.
   - `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_BASE_URL` — *opcional*,
     trazas en [Langfuse](https://langfuse.com). Sin ellas, la app funciona igual sin tracing.
+  - `CORS_ORIGINS` — orígenes del navegador permitidos (el frontend desplegado), separados
+    por comas. Vacío en local: el proxy de Vite evita CORS.
   - `REDIS_URL` y `MESSAGE_BUFFER_*` — *opcional*, debounce de mensajes con Redis
     (ver más abajo). Sin Redis, `/chat` responde mensaje por mensaje.
 - Un **Postgres** accesible (Supabase, Neon, Docker local…). Sin él, `/chat`

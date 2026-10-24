@@ -20,7 +20,9 @@ import os
 from contextlib import asynccontextmanager
 from datetime import date
 
+from dotenv import load_dotenv
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from starlette.responses import JSONResponse
 
@@ -36,7 +38,14 @@ from .conversational_agent.tools import limpiar_salida_llm
 from .crew import TravelCrew
 from .observabilidad import cerrar_observabilidad, init_observabilidad, traza
 
+load_dotenv()
+
 ARCHIVO_ITINERARIO = "itinerary.md"
+
+# Origenes que pueden llamar a la API desde el navegador (el frontend en Vercel,
+# por ejemplo), separados por comas. Vacio = sin CORS: basta en local, donde el
+# frontend llega por el proxy de Vite y el navegador no ve otro origen.
+CORS_ORIGINS = [o.strip() for o in os.getenv("CORS_ORIGINS", "").split(",") if o.strip()]
 
 # Se pone a False si el agente conversacional no pudo arrancar (falta
 # DATABASE_URL, por ejemplo). /plan-trip sigue funcionando igual.
@@ -92,6 +101,14 @@ app = FastAPI(
     version="2.0.0",
     lifespan=lifespan,
 )
+
+if CORS_ORIGINS:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=CORS_ORIGINS,
+        allow_methods=["GET", "POST"],
+        allow_headers=["Content-Type"],
+    )
 
 
 class TripRequest(BaseModel):
