@@ -1,0 +1,112 @@
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: servicio-fastapi-crewai-planificador-viajes
+spec:
+  template:
+    spec:
+      # Cuenta de servicio con la que corre el contenedor. Hace falta una propia:
+      # el proyecto no tiene la cuenta por defecto de Compute Engine. Necesita:
+      #   - roles/aiplatform.user               -> Gemini por Vertex (respaldo de OpenAI)
+      #   - roles/secretmanager.secretAccessor  -> leer los secretos de abajo
+      serviceAccountName: sa-cloudrun-planificador@datapath-kevin-inofuente.iam.gserviceaccount.com
+      # El turno que lanza el crew tarda varios minutos (default de Cloud Run: 300s).
+      timeoutSeconds: 900
+      containers:
+        - image: us-central1-docker.pkg.dev/datapath-kevin-inofuente/repo-crewai-planificador-viajes/imagen-crewai-planificador-viajes:v1  # Cambiar en cada despliegue (v2, v3...), igual que _VERSION en cloudbuild
+          env:
+            # ============================================
+            # VARIABLES NO SENSIBLES (valor en texto plano)
+            # ============================================
+            # --- LLM principal (OpenAI) del crew ---
+            - name: MODEL
+              value: "gpt-5.1"
+            # --- Respaldo con Gemini via Vertex AI ---
+            # Sin GOOGLE_APPLICATION_CREDENTIALS: en Cloud Run se usa la cuenta de servicio.
+            - name: GOOGLE_CLOUD_PROJECT
+              value: "datapath-kevin-inofuente"
+            - name: GOOGLE_CLOUD_LOCATION
+              value: "global"
+            # --- Postgres (memoria del agente) ---
+            - name: DB_USER
+              value: "postgres.cqpaeitrxuibllgsdcrz"
+            - name: DB_HOST
+              value: "aws-0-sa-east-1.pooler.supabase.com"
+            - name: DB_PORT
+              value: "5432"
+            - name: DB_NAME
+              value: "postgres"
+            # --- Observabilidad (Langfuse) ---
+            - name: LANGFUSE_PUBLIC_KEY
+              value: "pk-lf-4abd39f5-581b-4728-b273-6b5d18cd0f52"
+            - name: LANGFUSE_BASE_URL
+              value: "https://us.cloud.langfuse.com"
+            # --- Redis (debounce de mensajes) ---
+            - name: REDIS_HOST
+              value: "redis-16963.crce207.sa-east-1-2.ec2.cloud.redislabs.com"
+            - name: REDIS_PORT
+              value: "16963"
+            - name: REDIS_DB
+              value: "0"
+            - name: REDIS_USERNAME
+              value: "default"
+            - name: REDIS_TLS
+              value: "false"
+            # --- Debounce ---
+            - name: MESSAGE_BUFFER_ENABLED
+              value: "true"
+            - name: MESSAGE_BUFFER_WINDOW_SECONDS
+              value: "10"
+            - name: MESSAGE_BUFFER_TTL_SECONDS
+              value: "300"
+            - name: MESSAGE_BUFFER_SEPARATOR
+              value: "\\n"
+            - name: MESSAGE_BUFFER_LOCK_TTL_SECONDS
+              value: "900"
+            # --- CORS: el frontend en Vercel ---
+            - name: CORS_ORIGINS
+              value: "https://planificador-viajes-frontend.vercel.app"
+            # ============================================
+            # SECRETOS (Secret Manager)
+            # Cloud Run lee el valor al arrancar y lo inyecta como variable de entorno.
+            # ============================================
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: OPENAI_API_KEY
+                  key: latest
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: DB_PASSWORD
+                  key: latest
+            - name: TAVILY_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: TAVILY_API_KEY
+                  key: latest
+            - name: CREWAI_PLATFORM_INTEGRATION_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: CREWAI_PLATFORM_INTEGRATION_TOKEN
+                  key: latest
+            - name: LANGFUSE_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: LANGFUSE_SECRET_KEY
+                  key: latest
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: REDIS_PASSWORD
+                  key: latest
+          ports:
+            - containerPort: 4000
+          # ============================================
+          # RECURSOS (RAM y CPU)
+          # Por defecto Cloud Run da 512Mi; CrewAI + LangChain + clientes se quedan cortos.
+          # ============================================
+          resources:
+            limits:
+              memory: 2Gi
+              cpu: "1"

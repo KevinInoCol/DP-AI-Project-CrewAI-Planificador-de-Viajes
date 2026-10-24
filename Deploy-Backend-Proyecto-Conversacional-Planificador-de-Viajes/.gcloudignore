@@ -1,0 +1,15 @@
+# Lo que `gcloud builds submit` NO sube a Cloud Build.
+# Los secretos nunca salen de la maquina: en Cloud Run van como variables de
+# entorno / Secret Manager.
+.env
+.env.*
+!.env.example
+.gcloudignore
+.git
+.gitignore
+**/__pycache__
+**/*.pyc
+**/.DS_Store
+.venv/
+itinerary.md
+README.md

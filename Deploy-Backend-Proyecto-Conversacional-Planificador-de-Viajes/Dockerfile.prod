@@ -1,0 +1,32 @@
+FROM python:3.12-slim
+
+ENV PYTHONUNBUFFERED=1
+
+# set the working directory
+WORKDIR /usr/src/app
+
+# install dependencies
+COPY ./requirements.txt ./
+
+# Con uv y no con pip: con las ~740 dependencias fijadas de este proyecto, pip se
+# queda minutos atascado preparando metadatos; uv instala lo mismo en segundos.
+COPY --from=ghcr.io/astral-sh/uv:0.11.18 /uv /bin/uv
+RUN uv pip install --system --no-cache -r requirements.txt
+
+# `application` es un PAQUETE (usa imports relativos: from .crew import ...),
+# asi que en el path va la carpeta que lo CONTIENE, no la propia application/.
+# Apuntar dentro expondria sus submodulos (tools, config...) como top-level.
+ENV PYTHONPATH=/usr/src/app
+
+# copy src code
+COPY ./application ./application
+
+EXPOSE 4000
+
+# FASTAPI / STREAMLIT
+#ENTRYPOINT ["streamlit", "run", "application/streamlit_page.py", "--server.port=4000", "--server.address=0.0.0.0"]
+
+# start the server
+# --forwarded-allow-ips: detras del proxy de Cloud Run, para que --proxy-headers
+# confie en X-Forwarded-* (esquema https e IP real del cliente).
+CMD ["uvicorn", "application.main:app", "--host", "0.0.0.0", "--port", "4000", "--proxy-headers", "--forwarded-allow-ips", "*"]

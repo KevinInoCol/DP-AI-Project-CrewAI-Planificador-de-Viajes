@@ -1,0 +1,9 @@
+# Politica IAM del servicio de Cloud Run. Se aplica con:
+#   gcloud run services set-iam-policy servicio-fastapi-crewai-planificador-viajes gcr-service-policy.yaml --region us-central1 --project datapath-kevin-inofuente
+#
+# allUsers + run.invoker = endpoint PUBLICO. Es necesario porque el frontend en
+# Vercel llama a la API desde el navegador del usuario, sin credenciales de Google.
+bindings:
+  - members:
+      - allUsers
+    role: roles/run.invoker

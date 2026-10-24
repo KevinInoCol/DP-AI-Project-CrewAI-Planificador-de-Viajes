@@ -1,0 +1,10 @@
+# Los secretos NUNCA van en la imagen: en Cloud Run llegan como variables de
+# entorno / Secret Manager.
+.env
+.env.*
+**/__pycache__
+**/*.pyc
+**/.DS_Store
+.venv/
+itinerary.md
+.git

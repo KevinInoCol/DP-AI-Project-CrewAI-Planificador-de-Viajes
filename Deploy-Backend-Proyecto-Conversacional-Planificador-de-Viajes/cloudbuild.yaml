@@ -1,0 +1,19 @@
+# La versión de la imagen se pasa al construir:
+#   gcloud builds submit --config=cloudbuild.yaml --substitutions=_VERSION=v2
+# Debe coincidir con la etiqueta de la imagen en service.yaml.
+substitutions:
+  _VERSION: v1
+
+steps:
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['build', '-f', 'Dockerfile.prod', '-t', 'us-central1-docker.pkg.dev/datapath-kevin-inofuente/repo-crewai-planificador-viajes/imagen-crewai-planificador-viajes:${_VERSION}', '.']
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', 'us-central1-docker.pkg.dev/datapath-kevin-inofuente/repo-crewai-planificador-viajes/imagen-crewai-planificador-viajes:${_VERSION}']
+
+# El proyecto no tiene la cuenta de servicio por defecto de Compute Engine (la que
+# Cloud Build usa si no se indica otra), asi que el build corre con una propia:
+# Artifact Registry Writer + Logs Writer + Storage Object Viewer (para leer el
+# codigo subido). Con una cuenta propia, Cloud Build exige elegir donde van los logs.
+serviceAccount: 'projects/datapath-kevin-inofuente/serviceAccounts/sa-cloudbuild-planificador@datapath-kevin-inofuente.iam.gserviceaccount.com'
+options:
+  logging: CLOUD_LOGGING_ONLY
