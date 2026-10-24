@@ -151,3 +151,26 @@ permite solo 20 peticiones al día, insuficiente para un crew). Requisitos:
   vía `GOOGLE_APPLICATION_CREDENTIALS` o `gcloud auth application-default login`.
 - `gemini-3.5-flash` se sirve desde `GOOGLE_CLOUD_LOCATION=global`.
 - No definir `GEMINI_API_KEY` ni `GOOGLE_API_KEY`: CrewAI las prefiere a Vertex.
+
+#### Credenciales de Vertex en una configuración de gcloud aparte
+
+Si en tu máquina ya tienes un `gcloud auth application-default login` con otra
+cuenta (por ejemplo la del trabajo), no lo pises: genera las credenciales de la
+cuenta dueña del proyecto en una configuración separada (se abre el navegador una
+vez):
+
+```bash
+CLOUDSDK_CONFIG=$HOME/.config/<nombre-de-la-config> gcloud auth application-default login --account=<tu-correo>
+# Proyecto de cuota: evita el aviso "without a quota project" y errores de cuota.
+CLOUDSDK_CONFIG=$HOME/.config/<nombre-de-la-config> gcloud auth application-default set-quota-project <id-del-proyecto>
+```
+
+Y apunta el `.env` al archivo que se genera ahí:
+
+```bash
+GOOGLE_APPLICATION_CREDENTIALS=${HOME}/.config/<nombre-de-la-config>/application_default_credentials.json
+```
+
+En el `.env` escribe `${HOME}` con llaves (o la ruta absoluta): `python-dotenv`
+expande `${HOME}` pero deja `$HOME` sin llaves como texto literal. La cuenta de
+`<tu-correo>` necesita el rol *Vertex AI User* en `GOOGLE_CLOUD_PROJECT`.
