@@ -1,0 +1,22 @@
+# Parametros del LLM conversacional y de la memoria.
+# Config pura: aqui no va prompt ni logica. Lo lee conversational_agent/agent.py.
+#
+# OJO: este NO es el modelo del crew de CrewAI. El crew sigue usando la variable
+# MODEL del .env. Este bloque es solo del agente que dialoga con el usuario.
+
+llm:
+  provider: openai
+  model: gpt-4.1
+  # Algo de temperatura para que la conversacion no suene robotica, pero baja
+  # para que no invente datos del viaje ni se salte preguntas del checklist.
+  temperature: 0.3
+  # El crew tarda minutos, pero el turno conversacional debe ser rapido.
+  timeout: 60
+
+memory:
+  # Umbral de tokens que dispara el resumen del historial.
+  token_limit: 3000
+  # Mensajes recientes que sobreviven al resumen.
+  keep_messages: 20
+  # Modelo barato para resumir: no necesita la calidad del principal.
+  summary_model: gpt-4.1-mini
