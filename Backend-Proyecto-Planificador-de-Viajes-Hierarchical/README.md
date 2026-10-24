@@ -27,7 +27,8 @@ Todo lo demás (herramientas Tavily, Google Calendar, FastAPI, YAML de tareas,
   - `OPENAI_API_KEY` — modelo LLM (también lo usa el **manager** para coordinar).
   - `TAVILY_API_KEY` — búsqueda en internet de los agentes ([gratis en tavily.com](https://tavily.com)).
   - `CREWAI_PLATFORM_INTEGRATION_TOKEN` — integración de Google Calendar (Settings → Integrations en app.crewai.com).
-  - `GEMINI_API_KEY` — *opcional*, respaldo con Gemini 3.5 Flash si OpenAI se queda sin crédito.
+  - `GOOGLE_CLOUD_PROJECT`, `GOOGLE_CLOUD_LOCATION`, `GOOGLE_APPLICATION_CREDENTIALS` — *opcional*,
+    respaldo con Gemini 3.5 Flash vía **Vertex AI** si OpenAI se queda sin crédito.
   - `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_BASE_URL` — *opcional*,
     trazas en [Langfuse](https://langfuse.com). Sin ellas, la app funciona igual sin tracing.
 
@@ -136,8 +137,17 @@ manager ↔ especialistas que distingue a este modo del secuencial.
 
 ### Respaldo con Gemini si OpenAI se queda sin crédito
 
-Con `GEMINI_API_KEY` en el `.env`, `respaldo_llm.py` envuelve el LLM del crew
+Con `GOOGLE_CLOUD_PROJECT` en el `.env`, `respaldo_llm.py` envuelve el LLM del crew
 (`LLMConRespaldo`, compartido por el manager y los 6 especialistas): cada llamada
 va primero a OpenAI y, **solo** si responde `429 insufficient_quota`, se repite con
 `gemini-3.5-flash`. Cualquier otro error sube tal cual, para que Gemini no tape bugs.
 Cuando entra el respaldo, la consola muestra `💸 OpenAI sin credito: el crew pasa a Gemini`.
+
+**Gemini va por Vertex AI** (no por la API key de AI Studio, cuyo plan gratuito
+permite solo 20 peticiones al día, insuficiente para un crew). Requisitos:
+
+- Proyecto de GCP con facturación y la API `aiplatform.googleapis.com` habilitada.
+- Credenciales con permiso `aiplatform.endpoints.predict` (rol *Vertex AI User*),
+  vía `GOOGLE_APPLICATION_CREDENTIALS` o `gcloud auth application-default login`.
+- `gemini-3.5-flash` se sirve desde `GOOGLE_CLOUD_LOCATION=global`.
+- No definir `GEMINI_API_KEY` ni `GOOGLE_API_KEY`: CrewAI las prefiere a Vertex.

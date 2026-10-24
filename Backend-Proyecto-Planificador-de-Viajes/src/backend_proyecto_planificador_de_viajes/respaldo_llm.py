@@ -1,5 +1,5 @@
 """
-Respaldo con Gemini cuando OpenAI se queda sin credito.
+Respaldo con Gemini (via Vertex AI) cuando OpenAI se queda sin credito.
 
 Regla unica para todo el sistema: se intenta SIEMPRE OpenAI primero, y solo si
 OpenAI responde "sin credito" (429 `insufficient_quota`) se repite la MISMA
@@ -14,7 +14,11 @@ Se aplica en tres sitios:
   SummarizationMiddleware usa en lugar de su modelo.
 - Crew de CrewAI: `LLMConRespaldo`, un BaseLLM que envuelve al LLM de OpenAI.
 
-Sin GEMINI_API_KEY todo funciona como antes, sin respaldo.
+Gemini se consume por Vertex AI (Agent Platform) en el proyecto de GCP de
+GOOGLE_CLOUD_PROJECT, autenticando con Application Default Credentials: las de
+GOOGLE_APPLICATION_CREDENTIALS si esta definida, o las de `gcloud auth
+application-default login`. Sin GOOGLE_CLOUD_PROJECT todo funciona como antes,
+sin respaldo.
 """
 
 import os
@@ -33,7 +37,9 @@ from pydantic import PrivateAttr
 
 load_dotenv()
 
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+GOOGLE_CLOUD_PROJECT = os.getenv("GOOGLE_CLOUD_PROJECT")
+# Los modelos Gemini 3 en Vertex se sirven desde el endpoint global.
+GOOGLE_CLOUD_LOCATION = os.getenv("GOOGLE_CLOUD_LOCATION", "global")
 MODEL = os.getenv("MODEL")
 
 MODELO_GEMINI = "gemini-3.5-flash"
@@ -67,14 +73,19 @@ def _avisar(donde: str) -> None:
 
 
 def gemini_langchain() -> ChatGoogleGenerativeAI | None:
-    """Modelo de respaldo para LangChain, o None si no hay GEMINI_API_KEY.
+    """Modelo de respaldo para LangChain (Vertex), o None si no hay GOOGLE_CLOUD_PROJECT.
 
     Sin temperature a proposito: Gemini 3 esta afinado para su valor por defecto
     y Google desaconseja bajarlo.
     """
-    if not GEMINI_API_KEY:
+    if not GOOGLE_CLOUD_PROJECT:
         return None
-    return ChatGoogleGenerativeAI(model=MODELO_GEMINI, google_api_key=GEMINI_API_KEY)
+    return ChatGoogleGenerativeAI(
+        model=MODELO_GEMINI,
+        vertexai=True,
+        project=GOOGLE_CLOUD_PROJECT,
+        location=GOOGLE_CLOUD_LOCATION,
+    )
 
 
 class FallbackPorCredito(AgentMiddleware):
@@ -213,10 +224,17 @@ class LLMConRespaldo(BaseLLM):
 def llm_del_crew() -> BaseLLM | None:
     """LLM para los agentes del crew. None = que CrewAI use su default (MODEL).
 
-    Solo envolvemos si hay GEMINI_API_KEY y MODEL; si no, el crew queda como siempre.
+    Solo envolvemos si hay GOOGLE_CLOUD_PROJECT y MODEL; si no, el crew queda
+    como siempre. OJO: no debe haber GEMINI_API_KEY/GOOGLE_API_KEY en el entorno,
+    porque CrewAI las prefiere a Vertex y saldria por la API de AI Studio.
     """
-    if not (GEMINI_API_KEY and MODEL):
+    if not (GOOGLE_CLOUD_PROJECT and MODEL):
         return None
     principal = LLM(model=MODEL)
-    respaldo = LLM(model=f"gemini/{MODELO_GEMINI}", api_key=GEMINI_API_KEY)
+    respaldo = LLM(
+        model=f"gemini/{MODELO_GEMINI}",
+        use_vertexai=True,
+        project=GOOGLE_CLOUD_PROJECT,
+        location=GOOGLE_CLOUD_LOCATION,
+    )
     return LLMConRespaldo(principal, respaldo)

@@ -18,7 +18,8 @@ que escribir la petición perfecta de una sola vez: la construye conversando.
 - [uv](https://docs.astral.sh/uv/) para gestionar dependencias
 - Claves en el archivo `.env` (ver `.env.example`):
   - `OPENAI_API_KEY` — modelo LLM.
-  - `GEMINI_API_KEY` — *opcional*, respaldo con Gemini 3.5 Flash si OpenAI se queda sin crédito.
+  - `GOOGLE_CLOUD_PROJECT`, `GOOGLE_CLOUD_LOCATION`, `GOOGLE_APPLICATION_CREDENTIALS` — *opcional*,
+    respaldo con Gemini 3.5 Flash vía **Vertex AI** si OpenAI se queda sin crédito.
   - `TAVILY_API_KEY` — búsqueda en internet de los agentes ([gratis en tavily.com](https://tavily.com)).
   - `CREWAI_PLATFORM_INTEGRATION_TOKEN` — integración de Google Calendar (Settings → Integrations en app.crewai.com).
   - `DB_USER`, `DB_PASSWORD`, `DB_HOST`, `DB_PORT`, `DB_NAME` — Postgres donde el
@@ -223,7 +224,7 @@ por ese SDK, y cada generación saldría duplicada.
 
 ### Respaldo con Gemini si OpenAI se queda sin crédito
 
-Con `GEMINI_API_KEY` en el `.env`, `respaldo_llm.py` hace que cada llamada vaya
+Con `GOOGLE_CLOUD_PROJECT` en el `.env`, `respaldo_llm.py` hace que cada llamada vaya
 primero a OpenAI y, **solo** si OpenAI responde `429 insufficient_quota`, se repita
 esa misma llamada con `gemini-3.5-flash`. Cualquier otro error sube tal cual, para
 que Gemini no tape bugs.
@@ -235,4 +236,12 @@ que Gemini no tape bugs.
 - **Crew**: `LLMConRespaldo`, un `BaseLLM` de CrewAI compartido por los 6 agentes.
 
 Cuando entra el respaldo, la consola muestra `💸 OpenAI sin credito: ... pasa a Gemini`.
-Sin `GEMINI_API_KEY` todo funciona como antes, sin respaldo.
+
+**Gemini va por Vertex AI** (no por la API key de AI Studio, cuyo plan gratuito
+permite solo 20 peticiones al día, insuficiente para un crew). Requisitos:
+
+- Proyecto de GCP con facturación y la API `aiplatform.googleapis.com` habilitada.
+- Credenciales con permiso `aiplatform.endpoints.predict` (rol *Vertex AI User*),
+  vía `GOOGLE_APPLICATION_CREDENTIALS` o `gcloud auth application-default login`.
+- `gemini-3.5-flash` se sirve desde `GOOGLE_CLOUD_LOCATION=global`.
+- No definir `GEMINI_API_KEY` ni `GOOGLE_API_KEY`: CrewAI las prefiere a Vertex.
